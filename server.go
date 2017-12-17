@@ -223,9 +223,14 @@ func (self *SearchProxyServer) _Handler(w http.ResponseWriter, r *http.Request) 
 
 		//Referから引けなければ、初回アクセスとして検索キーを含めたUriを返す
 		if mp := self._AtRouter(r); nil != mp {
+			//keywordは引いたら消去する。(転送先にはノイズになるため)
 			keyword := r.FormValue("keyword")
 			if 0 != len(keyword) {
 				r.Form.Del("keyword")
+
+				//Methodも変換。
+				r.Method = mp.Method.ToString()
+
 				return mp.CreateSearchUri(keyword)
 			}
 		}
@@ -282,6 +287,7 @@ func (self *SearchProxyServer) _Initialize(port int) error {
 		//Hulu
 		Router{
 			Name:      "hulu",
+			Method:    GET,
 			Endpoint:  "/v/hulu",
 			BaseUrl:   "https://www.happyon.jp",
 			SearchUrl: "/search?q=",
@@ -289,6 +295,7 @@ func (self *SearchProxyServer) _Initialize(port int) error {
 		//Amazon
 		Router{
 			Name:      "amazon",
+			Method:    GET,
 			Endpoint:  "/v/amazon",
 			BaseUrl:   "https://www.amazon.co.jp",
 			SearchUrl: "/s/ref=nb_sb_noss_1?__mk_ja_JP&url=search-alias%3Dprime-instant-video&field-keywords=",
@@ -296,6 +303,7 @@ func (self *SearchProxyServer) _Initialize(port int) error {
 		//Youtube
 		Router{
 			Name:      "youtube",
+			Method:    GET,
 			Endpoint:  "/v/youtube",
 			BaseUrl:   "https://www.youtube.com",
 			SearchUrl: "/results?search_query=",
@@ -303,6 +311,7 @@ func (self *SearchProxyServer) _Initialize(port int) error {
 		//Yodobashi.
 		Router{
 			Name:      "yodobashi",
+			Method:    GET,
 			Endpoint:  "/s/yodobashi",
 			BaseUrl:   "http://www.yodobashi.com",
 			SearchUrl: "/?word=",
@@ -310,6 +319,7 @@ func (self *SearchProxyServer) _Initialize(port int) error {
 		//Hobby
 		Router{
 			Name:      "1999",
+			Method:    GET,
 			Endpoint:  "/s/1999",
 			BaseUrl:   "http://www.1999.co.jp",
 			SearchUrl: "/search?searchkey=",

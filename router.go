@@ -6,11 +6,29 @@ const (
 	Router_Keyword = "keyword"
 )
 
+type HttpMethod int
+
+const (
+	GET HttpMethod = iota + 1
+	POST
+)
+
 type Router struct {
 	Name      string
+	Method    HttpMethod
 	Endpoint  string
 	BaseUrl   string
 	SearchUrl string
+}
+
+func (v HttpMethod) ToString() string {
+	switch v {
+	case GET:
+		return "GET"
+	case POST:
+		return "POST"
+	}
+	panic("Unknown HttpMethod.")
 }
 
 /**

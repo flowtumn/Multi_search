@@ -26,6 +26,15 @@ func _Echo_Handler(w http.ResponseWriter, r *http.Request) {
 	w.Write(body)
 }
 
+func Test_Server_Base(t *testing.T) {
+t.Run(
+	"",
+	func(t *tesing.T) {
+
+	},
+)
+}
+
 func Test_Server_DoRequest(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(_Echo_Handler))
 
