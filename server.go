@@ -1,27 +1,428 @@
-package main
+package muls
+
+/*
+* Step1: UserAccess  (e.g http://localhost:10101)
+*  -> Response search only page.
+* Step2: User submit.
+*  -> Return the HTML with keyword embedded in URL. (e.g  http://localhost:10101/v/hulu?keyword=xxxxx)
+*     If search type is "shop" to return raw url. (e.g http://www.1999.co.jp/search?serchkey=xxxxxx)
+* Finish
+ */
+
+//検索Page -> Submit -> iframe -> {auto action}
 
 import (
+	"bytes"
 	"fmt"
+	"html/template"
 	"io"
 	"io/ioutil"
 	"net/http"
+	"net/url"
+	"strconv"
 	"time"
 )
 
-func GetUrl(url string) (string, error) {
-	req, err := http.NewRequest("GET", url, nil)
+type SearchType int64
+
+const (
+	//対応するパラメーター
+	KEYWORD = "keyword"
+	SEARCH  = "search"
+)
+
+const (
+	Video SearchType = 0
+	Shop  SearchType = 1
+)
+
+type SearchProxyServer struct {
+	_Router     []Router
+	_Mux        *http.ServeMux
+	_Server     *http.Server
+	_Port       int
+	_SupportUri map[string]Router
+}
+
+func (self *SearchProxyServer) _GetHttpServerUrl() string {
+	return "http://" + self._Server.Addr
+}
+
+func (self *SearchProxyServer) _AtRouterByName(name string) *Router {
+	//Nameを基に検索。
+	for _, v := range self._Router {
+		if v.Name == name {
+			return &v
+		}
+	}
+	return nil
+}
+
+func (self *SearchProxyServer) _AtRouter(r *http.Request) *Router {
+	//登録されているrouter情報から取得。
+	for _, v := range self._Router {
+		if v.Endpoint == r.URL.Path {
+			return &v
+		}
+	}
+	return nil
+}
+
+func (self *SearchProxyServer) _AtSupportUrl(r *http.Request) *Router {
+	//Referから判定
+	for k, v := range self._SupportUri {
+		refer := r.Referer()
+		keyLength := len(k)
+
+		if keyLength < len(refer) {
+			refer = refer[:keyLength]
+		}
+
+		if k == refer {
+			return &v
+		}
+	}
+	return nil
+}
+
+/**
+ * Index.htmlに対応するHandler
+ */
+func (self *SearchProxyServer) _Handle_Index(w http.ResponseWriter) {
+	t, err := template.ParseFiles("index.html")
 	if nil != err {
-		return "", err
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
 	}
 
-	req.Header.Add(
-		"User-Agent",
-		"Mozilla/5.0 (Windows NT 6.1; WOW64; rv:52.9) Gecko/20100101 Goanna/3.4 Firefox/52.9 PaleMoon/27.6.0",
+	type Info struct {
+		Host string
+	}
+
+	err = t.Execute(
+		w,
+		Info{
+			Host: self._GetHttpServerUrl(),
+		},
 	)
+
+	if nil != err {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+}
+
+/**
+ * 検索に対応するHandler
+ */
+func (self *SearchProxyServer) _Handle_Search(w http.ResponseWriter, r *http.Request) {
+	t, err := template.ParseFiles("search.html")
+	if nil != err {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	keyword := r.FormValue("keyword")
+	searchType, err := strconv.ParseInt(r.FormValue("search"), 10, 64)
+	if nil != err {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	type Info struct {
+		Host     string
+		Keyword  string
+		Frame1   string
+		Frame2   string
+		Checked1 string
+		Checked2 string
+		Checked3 string
+	}
+
+	err = t.Execute(
+		w,
+		Info{
+			Host:    self._GetHttpServerUrl(),
+			Keyword: keyword,
+			Frame1: func() string {
+				if r := self._AtRouterByName(
+					func() string {
+						switch (SearchType)(searchType) {
+						case Video:
+							return "hulu"
+						case Shop:
+							return "yodobashi"
+						}
+						return ""
+					}(),
+				); r != nil {
+					//Videoなら、本Serverを経由
+					if Video == (SearchType)(searchType) {
+						return self._GetHttpServerUrl() + r.CreateEndpointWithKeyword(keyword)
+					} else {
+						//それ以外なら転送先のURIを返す。
+						return r.CreateSearchUri(keyword)
+					}
+				}
+				return ""
+			}(),
+			Frame2: func() string {
+				if r := self._AtRouterByName(
+					func() string {
+						switch (SearchType)(searchType) {
+						case Video:
+							return "amazon"
+						case Shop:
+							return "1999"
+						}
+						return ""
+					}(),
+				); r != nil {
+					//Videoなら、本Serverを経由
+					if Video == (SearchType)(searchType) {
+						return self._GetHttpServerUrl() + r.CreateEndpointWithKeyword(keyword)
+					} else {
+						//それ以外なら転送先のURIを返す。
+						return r.CreateSearchUri(keyword)
+					}
+				}
+				return ""
+			}(),
+			Checked1: func() string {
+				if Video == (SearchType)(searchType) {
+					return "checked"
+				}
+				return ""
+			}(),
+			Checked2: func() string {
+				if Shop == (SearchType)(searchType) {
+					return "checked"
+				}
+				return ""
+			}(),
+			Checked3: func() string {
+				return ""
+			}(),
+		},
+	)
+
+	if nil != err {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+}
+
+func (self *SearchProxyServer) _Handler(w http.ResponseWriter, r *http.Request) {
+	fmt.Printf(" Refer:     %s\n", r.Referer())
+
+	url := func() string {
+		//Referから引けるのなら、二回目以降のアクセスなのでBaseURL + RequestURIを返す
+		if mp := self._AtSupportUrl(r); nil != mp {
+			return mp.BaseUrl + r.RequestURI
+		}
+
+		//Referから引けなければ、初回アクセスとして検索キーを含めたUriを返す
+		if mp := self._AtRouter(r); nil != mp {
+			keyword := r.FormValue("keyword")
+			if 0 != len(keyword) {
+				r.Form.Del("keyword")
+				return mp.CreateSearchUri(keyword)
+			}
+		}
+
+		return ""
+	}()
+
+	//遷移するべきURLが無い。
+	if 0 == len(url) {
+		//検索キーワードが含まれているか？
+		keyword := r.FormValue("keyword")
+		if len(keyword) == 0 {
+			//検索キーワードが無いなら、IndexHandlerで対応。
+			self._Handle_Index(w)
+			return
+		}
+
+		//SearchHandlerで対応。
+		self._Handle_Search(w, r)
+		return
+	}
+
+	//Accept-Encodingは削除。(archiveが落ちてくるので)
+	r.Header.Del("Accept-Encoding")
+
+	err := DoRequest(
+		url,
+		r,
+		func(response *http.Response) error {
+			body, err := ioutil.ReadAll(response.Body)
+			if nil != err {
+				return err
+			}
+
+			w.WriteHeader(response.StatusCode)
+			w.Write(body)
+			return nil
+		},
+	)
+
+	if nil != err {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+/**
+ * Serverを初期化し、Routerを結び付けます。
+ */
+func (self *SearchProxyServer) _Initialize(port int) error {
+	self._Server = &http.Server{}
+	self._SupportUri = map[string]Router{}
+
+	for _, v := range []Router{
+		//Hulu
+		Router{
+			Name:      "hulu",
+			Endpoint:  "/v/hulu",
+			BaseUrl:   "https://www.happyon.jp",
+			SearchUrl: "/search?q=",
+		},
+		//Amazon
+		Router{
+			Name:      "amazon",
+			Endpoint:  "/v/amazon",
+			BaseUrl:   "https://www.amazon.co.jp",
+			SearchUrl: "/s/ref=nb_sb_noss_1?__mk_ja_JP&url=search-alias%3Dprime-instant-video&field-keywords=",
+		},
+		//Youtube
+		Router{
+			Name:      "youtube",
+			Endpoint:  "/v/youtube",
+			BaseUrl:   "https://www.youtube.com",
+			SearchUrl: "/results?search_query=",
+		},
+		//Yodobashi.
+		Router{
+			Name:      "yodobashi",
+			Endpoint:  "/s/yodobashi",
+			BaseUrl:   "http://www.yodobashi.com",
+			SearchUrl: "/?word=",
+		},
+		//Hobby
+		Router{
+			Name:      "1999",
+			Endpoint:  "/s/1999",
+			BaseUrl:   "http://www.1999.co.jp",
+			SearchUrl: "/search?searchkey=",
+		},
+	} {
+		//対応するrouterに追加。
+		self._Router = append(self._Router, v)
+
+		//Referから引けるようにするため、対応するURLも生成。
+		self._SupportUri[fmt.Sprintf("http://localhost:%d%s", port, v.Endpoint)] = v
+	}
+
+	self._Mux = http.NewServeMux()
+	self._Mux.HandleFunc("/", self._Handler)
+	http.DefaultServeMux = self._Mux
+	return nil
+}
+
+func (self *SearchProxyServer) Listen(host string, port int) error {
+	self._Server.Addr = fmt.Sprintf("%s:%d", host, port)
+	return self._Server.ListenAndServe()
+}
+
+func (v SearchProxyServer) GetRouters() []Router {
+	return v._Router
+}
+
+/**
+ * Serverを生成します。
+ */
+func CreateSearchProxyServer(port int) (*SearchProxyServer, error) {
+	r := &SearchProxyServer{}
+	r._Port = port
+	if err := r._Initialize(port); nil != err {
+		return nil, err
+	}
+	return r, nil
+}
+
+/**
+ * RootがEndpointなら検索Queryを生成し、それ以外ならBaseUrlにアクセスするProxy機構
+ */
+func (self *Router) Handle(w http.ResponseWriter, r *http.Request) {
+	defer func() {
+		io.Copy(ioutil.Discard, r.Body)
+		r.Body.Close()
+	}()
+
+	fmt.Println(r.Referer())
+	url := func() string {
+		if false {
+			if self.Endpoint == r.URL.Path {
+				return self.SearchUrl + "another"
+			} else {
+				return r.URL.RequestURI() + r.RequestURI
+			}
+		} else {
+			if self.Endpoint == r.URL.Path {
+				return self.BaseUrl + self.SearchUrl + url.QueryEscape("オデッセイ")
+				// return self.SearchUrl + r.FormValue(self.SearchKey)
+			} else {
+				return self.BaseUrl + r.URL.RequestURI()
+			}
+		}
+	}()
+
+	r.Header.Del("Accept-Encoding")
+	err := DoRequest(
+		url,
+		r,
+		func(response *http.Response) error {
+			body, err := ioutil.ReadAll(response.Body)
+			if nil != err {
+				return err
+			}
+
+			w.Write(body)
+			return nil
+		},
+	)
+
+	if nil != err {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+/**
+ * 指定したURLに対してRequestを発行します。
+ */
+func DoRequest(
+	url string,
+	request *http.Request,
+	callback func(*http.Response) error,
+) error {
+	body, err := ioutil.ReadAll(request.Body)
+	if err != nil {
+		return err
+	}
+
+	b := ioutil.NopCloser(bytes.NewReader(body))
+	req, err := http.NewRequest(request.Method, url, b)
+	if nil != err {
+		return err
+	}
+
+	//Copy Request-Header
+	for k, v := range request.Header {
+		req.Header[k] = v
+	}
 
 	response, err := (&http.Client{Timeout: time.Duration(10) * time.Second}).Do(req)
 	if nil != err {
-		return "", err
+		return err
 	}
 
 	defer func() {
@@ -29,65 +430,18 @@ func GetUrl(url string) (string, error) {
 		response.Body.Close()
 	}()
 
-	body, err := ioutil.ReadAll(response.Body)
-	if nil != err {
-		return "", err
-	}
-
-	return string(body), nil
-}
-
-func handlerYoutube(w http.ResponseWriter, r *http.Request) {
-	fmt.Printf("Req:   %+v\n", r)
-	fmt.Println(r.URL.RequestURI())
-	url := func() string {
-		if "/you" == r.URL.RequestURI() {
-			return "https://www.youtube.com/results?search_query=%E9%87%8E%E7%90%83"
-		} else {
-			return "https://wwww.youtube.com" + r.URL.RequestURI()
-		}
-	}()
-	fmt.Println(url)
-	body, _ := GetUrl(url)
-	fmt.Fprintf(w, body)
-}
-
-func handlerAmazon(w http.ResponseWriter, r *http.Request) {
-	fmt.Printf("Req:   %+v\n", r)
-	fmt.Println(r.URL.RequestURI())
-	url := func() string {
-		if "/ama" == r.URL.RequestURI() {
-			return "https://www.amazon.co.jp/s/ref=nb_sb_noss_1?__mk_ja_JP&url=search-alias%3Dprime-instant-video&field-keywords=another"
-		} else {
-			return "https://www.amazon.co.jp" + r.URL.RequestURI()
-			// return "https://www.amazon.co.jp/s/ref=nb_sb_noss_1?__mk_ja_JP&url=search-alias%3Dprime-instant-video&field-keywords=another"
-		}
-	}()
-	fmt.Println(url)
-	body, _ := GetUrl(url)
-	fmt.Fprintf(w, body)
-}
-
-func handler(w http.ResponseWriter, r *http.Request) {
-	// fmt.Printf("Req:   %+v\n", r)
-	fmt.Println(r.URL.RequestURI())
-	url := func() string {
-		if "/" == r.URL.RequestURI() {
-			return "https://www.happyon.jp/search?q=another"
-		} else {
-			return "https://www.happyon.jp" + r.URL.RequestURI()
-		}
-	}()
-	fmt.Println(url)
-	body, _ := GetUrl(url)
-	fmt.Fprintf(w, body)
+	return callback(response)
 }
 
 func main() {
-	http.HandleFunc("/", handler)
-	http.HandleFunc("/ama", handlerAmazon)
-	http.HandleFunc("/you", handlerYoutube)
-	http.ListenAndServe("localhost:12345", nil)
-	r, _ := GetUrl("http://www.yahoo.co.jp")
-	fmt.Println(r)
+	ser, _ := CreateSearchProxyServer(10101)
+
+	fmt.Println("Support endpoints.")
+	for _, v := range ser._Router {
+		fmt.Printf("%s\n", v.Endpoint)
+	}
+	fmt.Println("--------------------")
+	fmt.Printf("Please access to      %s\n", ser._GetHttpServerUrl())
+
+	ser.Listen("localhost", 10101)
 }
