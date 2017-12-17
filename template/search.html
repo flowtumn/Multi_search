@@ -1,0 +1,19 @@
+<html>
+  <head>
+    <meta charset="UTF-8"> 
+  </head>
+
+  <body>
+    <div align="right">
+      <form action="{{.Host}}" method="GET">
+        Search Keyword:<input name="keyword" id="keyword" type="text" value="{{.Keyword}}">
+        <input type="radio" name="search" value="0" {{.Checked1}}>Video
+        <input type="radio" name="search" value="1" {{.Checked2}}>Shop
+        <input type="submit" value="Search">
+      </form>
+    </div>
+
+    <iframe width="49%" height="90%" src="{{.Frame1}}"></iframe>
+    <iframe width="49%" height="90%" src="{{.Frame2}}"></iframe>
+  </body>
+</html>
