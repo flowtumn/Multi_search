@@ -217,8 +217,6 @@ func (self *SearchProxyServer) _Handle_Search(w http.ResponseWriter, r *http.Req
 }
 
 func (self *SearchProxyServer) _Handler(w http.ResponseWriter, r *http.Request) {
-	fmt.Printf(" Refer:     %s\n", r.Referer())
-
 	url := func() string {
 		//Referから引けるのなら、二回目以降のアクセスなのでBaseURL + RequestURIを返す
 		if mp := self._AtSupportUrl(r); nil != mp {
@@ -343,8 +341,8 @@ func (self *SearchProxyServer) _Initialize(homeDir string, port int) error {
 	return nil
 }
 
-func (self *SearchProxyServer) Listen(host string, port int) error {
-	self._Server.Addr = fmt.Sprintf("%s:%d", host, port)
+func (self *SearchProxyServer) Listen(host string) error {
+	self._Server.Addr = fmt.Sprintf("%s:%d", host, self._Port)
 	return self._Server.ListenAndServe()
 }
 
