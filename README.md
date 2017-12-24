@@ -7,7 +7,7 @@
 
 ## 使い方
 
-html主体で動作するので、multi_searchのtemplateの中ににある
+html主体で動作するので、multi_search/templateの中にある
 
 index.htmlとsearch.htmlをmain.goと同じ場所に置いて下さい。
 
@@ -27,7 +27,7 @@ import (
 func main() {
 	pwd, _ := os.Getwd()
 	ser, _ := muls.CreateSearchProxyServer(pwd, 20202)
-	ser.Listen("localhost", 20202)
+	ser.Listen("localhost")
 }
 ```
 
