@@ -18,7 +18,6 @@ import (
 	"io"
 	"io/ioutil"
 	"net/http"
-	"net/url"
 	"strconv"
 	"time"
 )
@@ -29,6 +28,10 @@ const (
 	//対応するパラメーター
 	KEYWORD = "keyword"
 	SEARCH  = "search"
+
+	//ParseするBaseとなるHtml
+	INDEX_HTML  = "index.html"
+	SEARCH_HTML = "search.html"
 )
 
 const (
@@ -37,6 +40,7 @@ const (
 )
 
 type SearchProxyServer struct {
+	_HomeDir    string
 	_Router     []Router
 	_Mux        *http.ServeMux
 	_Server     *http.Server
@@ -89,7 +93,7 @@ func (self *SearchProxyServer) _AtSupportUrl(r *http.Request) *Router {
  * Index.htmlに対応するHandler
  */
 func (self *SearchProxyServer) _Handle_Index(w http.ResponseWriter) {
-	t, err := template.ParseFiles("index.html")
+	t, err := template.ParseFiles(self._HomeDir + "/" + INDEX_HTML)
 	if nil != err {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
@@ -116,7 +120,7 @@ func (self *SearchProxyServer) _Handle_Index(w http.ResponseWriter) {
  * 検索に対応するHandler
  */
 func (self *SearchProxyServer) _Handle_Search(w http.ResponseWriter, r *http.Request) {
-	t, err := template.ParseFiles("search.html")
+	t, err := template.ParseFiles(self._HomeDir + "/" + SEARCH_HTML)
 	if nil != err {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
@@ -279,9 +283,10 @@ func (self *SearchProxyServer) _Handler(w http.ResponseWriter, r *http.Request) 
 /**
  * Serverを初期化し、Routerを結び付けます。
  */
-func (self *SearchProxyServer) _Initialize(port int) error {
+func (self *SearchProxyServer) _Initialize(homeDir string, port int) error {
 	self._Server = &http.Server{}
 	self._SupportUri = map[string]Router{}
+	self._HomeDir = homeDir
 
 	for _, v := range []Router{
 		//Hulu
@@ -348,65 +353,6 @@ func (v SearchProxyServer) GetRouters() []Router {
 }
 
 /**
- * Serverを生成します。
- */
-func CreateSearchProxyServer(port int) (*SearchProxyServer, error) {
-	r := &SearchProxyServer{}
-	r._Port = port
-	if err := r._Initialize(port); nil != err {
-		return nil, err
-	}
-	return r, nil
-}
-
-/**
- * RootがEndpointなら検索Queryを生成し、それ以外ならBaseUrlにアクセスするProxy機構
- */
-func (self *Router) Handle(w http.ResponseWriter, r *http.Request) {
-	defer func() {
-		io.Copy(ioutil.Discard, r.Body)
-		r.Body.Close()
-	}()
-
-	fmt.Println(r.Referer())
-	url := func() string {
-		if false {
-			if self.Endpoint == r.URL.Path {
-				return self.SearchUrl + "another"
-			} else {
-				return r.URL.RequestURI() + r.RequestURI
-			}
-		} else {
-			if self.Endpoint == r.URL.Path {
-				return self.BaseUrl + self.SearchUrl + url.QueryEscape("オデッセイ")
-				// return self.SearchUrl + r.FormValue(self.SearchKey)
-			} else {
-				return self.BaseUrl + r.URL.RequestURI()
-			}
-		}
-	}()
-
-	r.Header.Del("Accept-Encoding")
-	err := DoRequest(
-		url,
-		r,
-		func(response *http.Response) error {
-			body, err := ioutil.ReadAll(response.Body)
-			if nil != err {
-				return err
-			}
-
-			w.Write(body)
-			return nil
-		},
-	)
-
-	if nil != err {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-	}
-}
-
-/**
  * 指定したURLに対してRequestを発行します。
  */
 func DoRequest(
@@ -443,15 +389,14 @@ func DoRequest(
 	return callback(response)
 }
 
-func main() {
-	ser, _ := CreateSearchProxyServer(10101)
-
-	fmt.Println("Support endpoints.")
-	for _, v := range ser._Router {
-		fmt.Printf("%s\n", v.Endpoint)
+/**
+ * Serverを生成します。
+ */
+func CreateSearchProxyServer(homeDir string, port int) (*SearchProxyServer, error) {
+	r := &SearchProxyServer{}
+	r._Port = port
+	if err := r._Initialize(homeDir, port); nil != err {
+		return nil, err
 	}
-	fmt.Println("--------------------")
-	fmt.Printf("Please access to      %s\n", ser._GetHttpServerUrl())
-
-	ser.Listen("localhost", 10101)
+	return r, nil
 }
